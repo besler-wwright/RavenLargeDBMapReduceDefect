@@ -1,15 +1,12 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Security.Cryptography.X509Certificates;
-using System.Threading;
 using Raven.Client.Documents;
-using Raven.Client.Documents.Indexes;
 using Raven.Client.Documents.Operations;
 using Raven.Client.Documents.Queries;
 using Raven.Client.Documents.Session;
+
 
 namespace RavenDBTestApril2019
 {
@@ -17,6 +14,8 @@ namespace RavenDBTestApril2019
     {
         static void Main(string[] args)
         {
+            Console.SetWindowSize(75,40);
+
             "Initializing...".WriteLine(Color.Pink);
 
             var databaseID = "BIG_DATA";
@@ -32,13 +31,70 @@ namespace RavenDBTestApril2019
             PatchSomeRecords(store, reporter);
             reporter.WaitForIndexing();
 
+            using (var rs = store.OpenSession())
+            {
+                rs.Store(reporter);
+                rs.SaveChanges();
+            }
+
+
             "Complete".WriteLine(Color.CornflowerBlue, true);
 
         }
 
+
+        private static void ImportRecords(IDocumentStore store, Reporter reporter)
+        {
+            const decimal MillionsToImport = (decimal)20;
+            const int Million = 1000000;
+            const int RecordsPerLoop = 10000;
+            var docsImported = 0;
+
+            reporter.ImportStartDate = DateTime.Now;
+
+            var loopCount = 0;
+            while (docsImported < (MillionsToImport * Million))
+            {
+                loopCount++;
+                using (var bulkInsert = store.BulkInsert(reporter.DatabaseId))
+                {
+                    while (docsImported < RecordsPerLoop * loopCount)
+                    {
+                        var charge = Charge.GenerateRandomCharge();
+                        bulkInsert.Store(Payment.GenerateNewFromCharge(charge));
+                        bulkInsert.Store(charge);
+                        docsImported += 2;
+                    }
+                }
+
+                //report each loop
+                reporter.CountOfDocsImported = docsImported;
+                reporter.ImportEndDate = DateTime.Now;
+                reporter.ReportStatus($"Imported {docsImported:##,##0} docs");
+            }
+
+            reporter.ImportEndDate = DateTime.Now;
+            reporter.CountOfDocsImported = docsImported;
+        }
+
+        private static void CreateIndexesWaitForNonStale(IDocumentStore store, Reporter reporter)
+        {
+            reporter.IndexesCreationStartDate = DateTime.Now;
+            
+            //add the indexes
+            new ChargeDataSearchIndex().Execute(store);
+            new PaymentDataSearchIndex().Execute(store);
+            new PatientTotalByGLDeptByGLAccountIndex().Execute(store);
+
+            //wait for indexing to see if error occurs
+            reporter.WaitForIndexing();
+
+            reporter.IndexesCreationEndDate = DateTime.Now;
+        }
+
         private static void PatchSomeRecords(IDocumentStore store, Reporter reporter)
         {
-
+            reporter.PatchingStartDate = DateTime.Now;
             reporter.ReportStatus("Starting Patching");
 
             //patch some records
@@ -62,7 +118,7 @@ namespace RavenDBTestApril2019
             {
                 var query = rs.Advanced
                     .DocumentQuery<PaymentDataSearchIndex.Result, PaymentDataSearchIndex>()
-                    .WhereLessThan(z => z.Amount, -500);
+                    .WhereLessThan(z => z.Amount, -5000);
 
                 var patchByQueryOperation = BuildAddTagPatchByQueryOperation(query, denormalizedTag, user, true);
 
@@ -72,6 +128,7 @@ namespace RavenDBTestApril2019
 
             }
 
+            reporter.PatchingEndDate = DateTime.Now;
             reporter.ReportStatus("Patching Command(s) sent");
         }
 
@@ -85,11 +142,13 @@ namespace RavenDBTestApril2019
                 {
                     DeterminateProgress progress = (DeterminateProgress)x;
                     var perc = (((decimal)progress.Processed / (decimal)progress.Total) * 100);
-                    reporter.ReportStatus($"Tag Progress: { perc :##,##0.0###}%");
+                    reporter.CountOfDocsPatched = progress.Processed;
+                    reporter.PatchingEndDate = DateTime.Now; //by doing this here,we get to see the rate as we go
+                    reporter.ReportStatus($"Tag Progress: { perc:##,##0.0###}%   [{progress.Processed:##,##0} Tagged of {progress.Total:##,##0}]");
                 };
 
                 var result = operation.WaitForCompletion<BulkOperationResult>();
-                reporter.TaggingCompletionDate = DateTime.Now;
+                
                 var formattedResults =
                     result.Details
                         .Select(x => (BulkOperationResult.PatchDetails)x)
@@ -107,49 +166,6 @@ namespace RavenDBTestApril2019
                 "Successfully executed path".WriteLine(Color.Cyan);
             }
         }
-
-
-        private static void ImportRecords(IDocumentStore store, Reporter reporter)
-        {
-            var countOfEachImported = 0;
-            const int Million = 1000000;
-            const int RecordsPerLoop = 10000;
-
-            var loopCount = 0;
-            while (countOfEachImported < (.01 * Million))
-            {
-                loopCount++;
-                using (var bulkInsert = store.BulkInsert(reporter.DatabaseId))
-                {
-                    while (countOfEachImported < RecordsPerLoop * loopCount)
-                    {
-                        var charge = Charge.GenerateRandomCharge();
-                        bulkInsert.Store(Payment.GenerateNewFromCharge(charge));
-                        bulkInsert.Store(charge);
-                        countOfEachImported += 1;
-                    }
-                }
-                
-                //report each loop
-                reporter.ReportStatus($"Imported {countOfEachImported:##,##0} payments and {countOfEachImported:#0,###} charges");
-            }
-
-            reporter.ImportCompletedDate = DateTime.Now;
-        }
-
-        private static void CreateIndexesWaitForNonStale(IDocumentStore store, Reporter reporter)
-        {
-            //add the indexes
-            new ChargeDataSearchIndex().Execute(store);
-            new PaymentDataSearchIndex().Execute(store);
-            //new PatientTotalByGLDeptByGLAccountIndex().Execute(store);
-
-            reporter.IndexesCreationCCompleteDate = DateTime.Now;
-
-            //wait for indexing to see if error occurs
-            reporter.WaitForIndexing();
-        }
-
 
         public static PatchByQueryOperation BuildAddTagPatchByQueryOperation<T>(IDocumentQuery<T> query, DenormalizedTagReference<Tag> denormalizedTag, User user, bool allowStale = false, bool retrieveDetails = false)
         {
@@ -195,121 +211,7 @@ namespace RavenDBTestApril2019
             return patchByQueryOperation;
         }
 
+
     }
-
-    public class Reporter
-    {
-        public Reporter(IDocumentStore store)
-        {
-            this.Store = store;
-            this.DatabaseId = store.Database;
-            this.RavenURL = store.Urls.First();
-            StartTimer();
-            this.WaitForIndexing();
-        }
-        private readonly Stopwatch stopWatchTotalTime = new Stopwatch();
-        public bool IsWaitingForIndexingToComplete { get; set; }
-        public IDocumentStore Store { get; set; }
-        public string DatabaseId { get; set; }
-        public string RavenURL { get; set; }
-        
-        private TimeSpan startOfPatching { get; set; }
-        private IEnumerable<IndexInformation> indexes { get; set; }
-        private List<IndexInformation> staleIndexes { get; set; }
-        private string Status { get; set; }
-        public long CountOfDocuments { get; set; }
-        public int CountOfIndexes { get; set; }
-        public DateTime LastDatabaseRefresh { get; set; }
-        public DateTime? ImportCompletedDate { get; set; }
-        public DateTime? IndexesCreationCCompleteDate { get; set; }
-        public DateTime? TaggingCompletionDate { get; set; }
-
-        public void StartTimer()
-        {
-            stopWatchTotalTime.Start();
-        }
-
-
-        public void Report()
-        {
-            RefreshDatabaseStatus();
-
-            Console.Clear();
-            "*****************************************************".WriteLine(Color.CornflowerBlue);
-            $"RavenURL     : ".Write(Color.Gray); this.RavenURL.WriteLine(Color.CadetBlue);
-            $"LastDBRefresh: ".Write(Color.Gray); $"{this.LastDatabaseRefresh:G}".WriteLine(Color.GreenYellow);
-            $"Import Done  : ".Write(Color.Gray); $"{this.ImportCompletedDate:G}".WriteLine(Color.GreenYellow);
-            $"Index Create : ".Write(Color.Gray); $"{this.IndexesCreationCCompleteDate:G}".WriteLine(Color.GreenYellow);
-            $"Tagging Done : ".Write(Color.Gray); $"{this.TaggingCompletionDate:G}".WriteLine(Color.GreenYellow);
-            $"Doc Count    : ".Write(Color.Gray); $"{ this.CountOfDocuments:##,###}".WriteLine(Color.WhiteSmoke);
-
-            if (indexes != null)
-            {
-                $"Indexes      : Count:".Write(Color.Gray); $"{this.CountOfIndexes}".Write(Color.Khaki); " Stale: ".Write(Color.DarkRed); $"{this.staleIndexes?.Count}".WriteLine(Color.DeepPink);
-                foreach (var index in indexes)
-                {
-                    var color = index.IsStale ? Color.DeepPink : Color.Green;
-                    $"   - IsStale:{index.IsStale} Name:{index.Name} ".WriteLine(color);
-                }
-            }
-            $"Status       : ".Write(Color.Gray); this.Status.WriteLine(Color.Pink);
-            this.Status = "";
-            $"Elapsed Time : ".Write(Color.Gray); $"{stopWatchTotalTime.Elapsed.Hours:00}:{stopWatchTotalTime.Elapsed.Minutes:00}:{stopWatchTotalTime.Elapsed.Seconds:00}".WriteLine(Color.LawnGreen);
-            "*****************************************************".WriteLine(Color.CornflowerBlue);
-        }
-
-        public void RefreshDatabaseStatus(bool forceUpdate = false)
-        {
-            //only update a max of every 5 seconds
-            var delta = DateTime.Now.Subtract(LastDatabaseRefresh).TotalSeconds;
-            //$"DELTA: {delta}".WriteLine(Color.PeachPuff);
-            //$"FORCE: {forceUpdate}".WriteLine(Color.PeachPuff);
-            if (forceUpdate || delta > 5)
-            {
-                //$"REFRESHING DB".WriteLine(Color.PeachPuff);
-                var admin = Store.Maintenance.ForDatabase(this.DatabaseId);
-
-                var databaseStatistics = admin.Send(new GetStatisticsOperation());
-                this.indexes = databaseStatistics.Indexes.Where(x => x.State != IndexState.Disabled);
-                this.staleIndexes = indexes.Where(z => z.IsStale).ToList();
-
-                this.CountOfDocuments = databaseStatistics.CountOfDocuments;
-                this.CountOfIndexes = databaseStatistics.CountOfIndexes;
-
-                this.LastDatabaseRefresh = DateTime.Now;
-            };
-        }
-
-        public void WaitForIndexing()
-        {
-            this.IsWaitingForIndexingToComplete = true;
-            var startOfWaitingForIndexing = stopWatchTotalTime.Elapsed;
-            
-            while (this.IsWaitingForIndexingToComplete)
-            {
-                RefreshDatabaseStatus(forceUpdate:true);
-                
-                if (staleIndexes == null || staleIndexes.Count == 0)
-                {
-                    this.IsWaitingForIndexingToComplete = false;
-                }
-                else
-                {
-                    ReportStatus($"Waited {stopWatchTotalTime.Elapsed.Subtract(startOfWaitingForIndexing):g} for non-stale indexes.");
-                }
-                
-                Thread.Sleep(5000);
-            }
-        }
-
-        public void ReportStatus(string status)
-        {
-            this.Status = status;
-            Report();
-        }
-    }
-        
-    
-
 }
 

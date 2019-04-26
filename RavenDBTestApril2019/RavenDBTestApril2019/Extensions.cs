@@ -49,6 +49,11 @@ namespace RavenDBTestApril2019
             return value != null;
         }
 
+        public static bool IsNull<T>(this T value)
+        {
+            return value == null;
+        }
+
 
         public static bool HasValues(this IEnumerable items)
         {
