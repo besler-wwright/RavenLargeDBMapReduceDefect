@@ -1,9 +1,11 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Configuration;
 using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography.X509Certificates;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Configuration;
 using Raven.Client.Documents;
 using Raven.Client.Documents.Operations;
@@ -15,20 +17,23 @@ namespace RavenDBTestApril2019
 {
     class Program
     {
-        static void Main(string[] args)
+        static async Task Main(string[] args)
         {
             Console.SetWindowSize(75,40);
+            
 
             "Loading appsettings.json".WriteLine(Color.Pink);
-
             var settings = GetSettings();
+            settings.ToJSONPretty().WriteLine(Color.Aquamarine);
 
             IDocumentStore store = new DocumentStore {Database = settings.DatabaseId, Certificate = new X509Certificate2(settings.CertPath), Urls = new[] {settings.RavenURL}};
             store.Initialize();
 
             var reporter = new Reporter(store) {Note = settings.Note};
 
-            if(settings.ImportDocs) ImportRecords(store, reporter, settings.MillionsOfDocsToImport);
+            reporter.ReportStatus("Starting...");
+
+            await InsertDocuments(settings, reporter, store);
             if(settings.CreateIndexes) CreateIndexesWaitForNonStale(store, reporter);
             if(settings.PatchDocs)PatchSomeRecords(store, reporter);
             reporter.WaitForIndexing();
@@ -44,6 +49,41 @@ namespace RavenDBTestApril2019
 
         }
 
+        private static async Task InsertDocuments(MySettings settings, Reporter reporter, IDocumentStore store)
+        {
+            //this method creates multiple threads to insert documents faster
+
+            const int Million = 1000000;
+            var importThreads = settings.CountOfInsertThreads;
+
+            if (settings.ImportDocs)
+            {
+                var docsAdded = 0;
+                reporter.ImportStartDate = DateTime.Now;
+
+                while (reporter.CountOfDocsImported < (settings.MillionsOfDocsToImport * Million))
+                {
+                    var tasks = new List<Task<int>>();
+                    for (int i = 0; i < importThreads; i++)
+                    {
+                        tasks.Add(InsertRandomDocsAsync(store, reporter.DatabaseId, settings.CountOfDocsToInsertPerThread));
+                    }
+
+                    await Task.WhenAll(tasks);
+
+                    docsAdded += tasks.Sum(z => z.Result);
+                    for (int i = 0; i < importThreads; i++)
+                    {
+                        reporter.CountOfDocsImported += tasks[i].Result;
+                    }
+
+                    reporter.ReportStatus($"Imported {docsAdded:##,##0} docs");
+                    reporter.ImportEndDate = DateTime.Now;
+                }
+            }
+        }
+
+
         private static MySettings GetSettings()
         {
             var builder = new ConfigurationBuilder()
@@ -58,37 +98,20 @@ namespace RavenDBTestApril2019
         }
 
 
-        private static void ImportRecords(IDocumentStore store, Reporter reporter, decimal millionsToImport = (decimal)20)
+        private static async Task<int> InsertRandomDocsAsync(IDocumentStore store, string dbId, int countOfDocsToInsert)
         {
-            const int Million = 1000000;
-            const int RecordsPerLoop = 10000;
-            var docsImported = 0;
-
-            reporter.ImportStartDate = DateTime.Now;
-
-            var loopCount = 0;
-            while (docsImported < (millionsToImport * Million))
+            var docsInserted = 0;
+            using (var bulkInsert = store.BulkInsert(dbId))
             {
-                loopCount++;
-                using (var bulkInsert = store.BulkInsert(reporter.DatabaseId))
+                while (docsInserted < countOfDocsToInsert)
                 {
-                    while (docsImported < RecordsPerLoop * loopCount)
-                    {
-                        var charge = Charge.GenerateRandomCharge();
-                        bulkInsert.Store(Payment.GenerateNewFromCharge(charge));
-                        bulkInsert.Store(charge);
-                        docsImported += 2;
-                    }
+                    var charge = Charge.GenerateRandomCharge();
+                    bulkInsert.Store(Payment.GenerateNewFromCharge(charge));
+                    bulkInsert.Store(charge);
+                    docsInserted += 2;
                 }
-
-                //report each loop
-                reporter.CountOfDocsImported = docsImported;
-                reporter.ImportEndDate = DateTime.Now;
-                reporter.ReportStatus($"Imported {docsImported:##,##0} docs");
             }
-
-            reporter.ImportEndDate = DateTime.Now;
-            reporter.CountOfDocsImported = docsImported;
+            return docsInserted;
         }
 
         private static void CreateIndexesWaitForNonStale(IDocumentStore store, Reporter reporter)
@@ -239,5 +262,6 @@ public class MySettings
     public bool ImportDocs { get; set; }
     public bool CreateIndexes { get; set; }
     public bool PatchDocs { get; set; }
-
+    public int CountOfInsertThreads { get; set; }
+    public int CountOfDocsToInsertPerThread { get; set; }
 }

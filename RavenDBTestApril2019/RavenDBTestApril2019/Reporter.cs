@@ -74,7 +74,7 @@ namespace RavenDBTestApril2019
         {
             stopWatchTotalTime.Start();
         }
-
+        
 
         public void Report()
         {
