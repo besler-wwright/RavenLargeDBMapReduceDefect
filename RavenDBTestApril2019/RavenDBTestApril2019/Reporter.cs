@@ -63,6 +63,7 @@ namespace RavenDBTestApril2019
         public DateTime? PatchingEndDate { get; set; }
         public long CountOfDocsPatched { get; set; }
         public decimal PatchingRatePerMinute { get; set; }
+        public string Note { get; set; }
 
         private PerformanceCounter cpuCounter;
         private PerformanceCounter ramCounter;

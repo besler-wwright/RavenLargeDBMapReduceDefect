@@ -1,7 +1,10 @@
 ﻿using System;
+using System.Configuration;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Security.Cryptography.X509Certificates;
+using Microsoft.Extensions.Configuration;
 using Raven.Client.Documents;
 using Raven.Client.Documents.Operations;
 using Raven.Client.Documents.Queries;
@@ -16,19 +19,18 @@ namespace RavenDBTestApril2019
         {
             Console.SetWindowSize(75,40);
 
-            "Initializing...".WriteLine(Color.Pink);
+            "Loading appsettings.json".WriteLine(Color.Pink);
 
-            var databaseID = "BIG_DATA";
-            var certPath = @"C:\Raven\Server\cluster.server.certificate.beslerwade.pfx";
-            var ravenURL = "https://a.beslerwade.development.run";
+            var settings = GetSettings();
 
-            IDocumentStore store = new DocumentStore {Database = databaseID, Certificate = new X509Certificate2(certPath), Urls = new[] {ravenURL}};
+            IDocumentStore store = new DocumentStore {Database = settings.DatabaseId, Certificate = new X509Certificate2(settings.CertPath), Urls = new[] {settings.RavenURL}};
             store.Initialize();
 
-            var reporter = new Reporter(store);
-            ImportRecords(store, reporter);
-            CreateIndexesWaitForNonStale(store, reporter);
-            PatchSomeRecords(store, reporter);
+            var reporter = new Reporter(store) {Note = settings.Note};
+
+            if(settings.ImportDocs) ImportRecords(store, reporter, settings.MillionsOfDocsToImport);
+            if(settings.CreateIndexes) CreateIndexesWaitForNonStale(store, reporter);
+            if(settings.PatchDocs)PatchSomeRecords(store, reporter);
             reporter.WaitForIndexing();
 
             using (var rs = store.OpenSession())
@@ -42,10 +44,22 @@ namespace RavenDBTestApril2019
 
         }
 
-
-        private static void ImportRecords(IDocumentStore store, Reporter reporter)
+        private static MySettings GetSettings()
         {
-            const decimal MillionsToImport = (decimal)20;
+            var builder = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.json", optional: true, reloadOnChange: true);
+
+            IConfigurationRoot configuration = builder.Build();
+
+            var settings = new MySettings();
+            configuration.Bind(settings);
+            return settings;
+        }
+
+
+        private static void ImportRecords(IDocumentStore store, Reporter reporter, decimal millionsToImport = (decimal)20)
+        {
             const int Million = 1000000;
             const int RecordsPerLoop = 10000;
             var docsImported = 0;
@@ -53,7 +67,7 @@ namespace RavenDBTestApril2019
             reporter.ImportStartDate = DateTime.Now;
 
             var loopCount = 0;
-            while (docsImported < (MillionsToImport * Million))
+            while (docsImported < (millionsToImport * Million))
             {
                 loopCount++;
                 using (var bulkInsert = store.BulkInsert(reporter.DatabaseId))
@@ -215,3 +229,15 @@ namespace RavenDBTestApril2019
     }
 }
 
+public class MySettings
+{
+    public string Note { get; set; }
+    public string DatabaseId { get; set; }
+    public string CertPath { get; set; }
+    public string RavenURL { get; set; }
+    public decimal MillionsOfDocsToImport { get; set; }
+    public bool ImportDocs { get; set; }
+    public bool CreateIndexes { get; set; }
+    public bool PatchDocs { get; set; }
+
+}
