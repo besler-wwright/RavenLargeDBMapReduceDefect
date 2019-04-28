@@ -78,7 +78,7 @@ namespace RavenDBTestApril2019
         public long CommittedRAM_Total { get; set; }
         public long CommittedRAM_Peak { get; set; }
 
-        public int CurrentCPUPercentage => Convert.ToInt32(cpuCounter.NextValue());
+        public int CurrentCPUPercentage { get; set; }
         public int MaxCPUPercentage => Stats.Max(z => z.CPUPercentage);
         public decimal AvgCPUPercentage => (decimal)Stats.Average(z => z.CPUPercentage);
 
@@ -193,6 +193,8 @@ namespace RavenDBTestApril2019
             CommittedRAM_Total = PerformanceInfo.GetCommittedTotalMemoryInMiB();
             CommittedRAM_Peak = PerformanceInfo.GetCommittedPeakMemoryInMiB();
 
+            //cpu
+            CurrentCPUPercentage = Convert.ToInt32(cpuCounter.NextValue());
         }
 
         
