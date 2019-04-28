@@ -19,31 +19,44 @@ namespace RavenDBTestApril2019
     {
         static async Task Main(string[] args)
         {
-            Console.SetWindowSize(75,40);
-            
+            Console.SetWindowSize(65, 40);
 
             "Loading appsettings.json".WriteLine(Color.Pink);
             var settings = GetSettings();
             settings.ToJSONPretty().WriteLine(Color.Aquamarine);
 
-            IDocumentStore store = new DocumentStore {Database = settings.DatabaseId, Certificate = new X509Certificate2(settings.CertPath), Urls = new[] {settings.RavenURL}};
+            IDocumentStore store = new DocumentStore { Database = settings.DatabaseId, Certificate = new X509Certificate2(settings.CertPath), Urls = new[] { settings.RavenURL } };
             store.Initialize();
 
-            var reporter = new Reporter(store) {Note = settings.Note};
+            var reporter = new Reporter(store) { Note = settings.Note };
 
-            reporter.ReportStatus("Starting...");
-
-            await InsertDocuments(settings, reporter, store);
-            if(settings.CreateIndexes) CreateIndexesWaitForNonStale(store, reporter);
-            if(settings.PatchDocs)PatchSomeRecords(store, reporter);
-            reporter.WaitForIndexing();
-
-            using (var rs = store.OpenSession())
+            try
             {
-                rs.Store(reporter);
-                rs.SaveChanges();
-            }
+                reporter.ReportStatus("Starting...");
 
+                if (settings.ImportDocs) await InsertDocuments(settings, reporter, store);
+                if (settings.CreateIndexes) CreateIndexesWaitForNonStale(store, reporter, settings);
+                if (settings.PatchDocs) PatchSomeRecords(store, reporter);
+                if (settings.WaitForIndexesToNotBeStale) reporter.WaitForIndexing();
+
+            }
+            catch (Exception e)
+            {
+                reporter.ExceptionMessage = e.Message;
+                reporter.StackTrace = e.StackTrace;
+
+                Console.WriteLine(e);
+                //throw;
+            }
+            finally
+            {
+                using (var rs = store.OpenSession())
+                {
+                    rs.Store(reporter);
+                    rs.SaveChanges();
+                }
+
+            }
 
             "Complete".WriteLine(Color.CornflowerBlue, true);
 
@@ -56,30 +69,27 @@ namespace RavenDBTestApril2019
             const int Million = 1000000;
             var importThreads = settings.CountOfInsertThreads;
 
-            if (settings.ImportDocs)
+            var docsAdded = 0;
+            reporter.ImportStartDate = DateTime.Now;
+
+            while (reporter.CountOfDocsImported < (settings.MillionsOfDocsToImport * Million))
             {
-                var docsAdded = 0;
-                reporter.ImportStartDate = DateTime.Now;
-
-                while (reporter.CountOfDocsImported < (settings.MillionsOfDocsToImport * Million))
+                var tasks = new List<Task<int>>();
+                for (int i = 0; i < importThreads; i++)
                 {
-                    var tasks = new List<Task<int>>();
-                    for (int i = 0; i < importThreads; i++)
-                    {
-                        tasks.Add(InsertRandomDocsAsync(store, reporter.DatabaseId, settings.CountOfDocsToInsertPerThread));
-                    }
-
-                    await Task.WhenAll(tasks);
-
-                    docsAdded += tasks.Sum(z => z.Result);
-                    for (int i = 0; i < importThreads; i++)
-                    {
-                        reporter.CountOfDocsImported += tasks[i].Result;
-                    }
-
-                    reporter.ReportStatus($"Imported {docsAdded:##,##0} docs");
-                    reporter.ImportEndDate = DateTime.Now;
+                    tasks.Add(InsertRandomDocsAsync(store, reporter.DatabaseId, settings.CountOfDocsToInsertPerThread));
                 }
+
+                await Task.WhenAll(tasks);
+
+                docsAdded += tasks.Sum(z => z.Result);
+                for (int i = 0; i < importThreads; i++)
+                {
+                    reporter.CountOfDocsImported += tasks[i].Result;
+                }
+
+                reporter.ReportStatus($"Imported {docsAdded:##,##0} docs");
+                reporter.ImportEndDate = DateTime.Now;
             }
         }
 
@@ -114,7 +124,7 @@ namespace RavenDBTestApril2019
             return docsInserted;
         }
 
-        private static void CreateIndexesWaitForNonStale(IDocumentStore store, Reporter reporter)
+        private static void CreateIndexesWaitForNonStale(IDocumentStore store, Reporter reporter, MySettings settings)
         {
             reporter.IndexesCreationStartDate = DateTime.Now;
             
@@ -124,7 +134,11 @@ namespace RavenDBTestApril2019
             new PatientTotalByGLDeptByGLAccountIndex().Execute(store);
 
             //wait for indexing to see if error occurs
-            reporter.WaitForIndexing();
+            if (settings.WaitForIndexesToNotBeStale)
+            {
+                reporter.WaitForIndexing();
+            }
+            
 
             reporter.IndexesCreationEndDate = DateTime.Now;
         }
@@ -250,18 +264,4 @@ namespace RavenDBTestApril2019
 
 
     }
-}
-
-public class MySettings
-{
-    public string Note { get; set; }
-    public string DatabaseId { get; set; }
-    public string CertPath { get; set; }
-    public string RavenURL { get; set; }
-    public decimal MillionsOfDocsToImport { get; set; }
-    public bool ImportDocs { get; set; }
-    public bool CreateIndexes { get; set; }
-    public bool PatchDocs { get; set; }
-    public int CountOfInsertThreads { get; set; }
-    public int CountOfDocsToInsertPerThread { get; set; }
 }

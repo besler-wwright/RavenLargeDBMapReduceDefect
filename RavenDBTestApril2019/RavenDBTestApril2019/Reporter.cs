@@ -24,22 +24,25 @@ namespace RavenDBTestApril2019
             this.DatabaseId = store.Database;
             this.RavenURL = store.Urls.First();
 
+            Stats = new List<Stat>();
+
             InitialiseCPUCounter();
-            InitializeRAMCounter();
 
             StartTimer();
             this.WaitForIndexing();
         }
 
         #region Fields and Properties
-
-        public string Id { get; set; }
-        public DateTime LastUpdated { get; set; }
-        private readonly Stopwatch stopWatchTotalTime = new Stopwatch();
-        public bool IsWaitingForIndexingToComplete { get; set; }
-
         [JsonIgnore]
         public IDocumentStore Store { get; set; }
+        private readonly Stopwatch stopWatchTotalTime = new Stopwatch();
+
+        public string Id { get; set; }
+        public string ExceptionMessage { get; set; }
+        public string StackTrace { get; set; }
+        public DateTime LastUpdated { get; set; }
+        public bool IsWaitingForIndexingToComplete { get; set; }
+
         public string DatabaseId { get; set; }
         public string RavenURL { get; set; }
         
@@ -66,9 +69,24 @@ namespace RavenDBTestApril2019
         public string Note { get; set; }
 
         private PerformanceCounter cpuCounter;
-        private PerformanceCounter ramCounter;
+
+        public long PhysicalRAM_Available { get; set; }
+        public long PhysicalRAM_Total { get; set; }
+        public decimal PhysicalRAM_FreePerc { get; set; }
+        public decimal PhysicalRAM_OccupiedPerc { get; set; }
+
+        public long CommittedRAM_Total { get; set; }
+        public long CommittedRAM_Peak { get; set; }
+
+        public int CurrentCPUPercentage => Convert.ToInt32(cpuCounter.NextValue());
+        public int MaxCPUPercentage => Stats.Max(z => z.CPUPercentage);
+        public decimal AvgCPUPercentage => (decimal)Stats.Average(z => z.CPUPercentage);
+
+
+        public List<Stat> Stats { get; set; }
 
         #endregion
+
 
         public void StartTimer()
         {
@@ -81,17 +99,24 @@ namespace RavenDBTestApril2019
             this.LastUpdated = DateTime.Now;
             RefreshDatabaseStatus();
             CalculateRates();
+            CaptureStats();
 
             Console.Clear();
             "*************************************************************************".WriteLine(Color.CornflowerBlue);
             var perfMonColor = Color.Pink;
-            $"CPU                 : ".Write(Color.Gray); $"{ Convert.ToInt32(cpuCounter.NextValue())}%".WriteLine(perfMonColor);
-            $"RAM                 : ".Write(Color.Gray); $"{ Convert.ToInt32(ramCounter.NextValue()):##,###}% Committed".WriteLine(perfMonColor);
+            $"CPU                 : Current   : ".Write(Color.Gray); $"{CurrentCPUPercentage}%".Write(perfMonColor); " Avg:".Write(Color.Gray); $"{AvgCPUPercentage:##0.#}%".Write(perfMonColor); " Max:".Write(Color.Gray); $"{MaxCPUPercentage}%".WriteLine(perfMonColor);
+            
+            $"\nPhysical RAM        : Total     : ".Write(Color.Gray); $"{ PhysicalRAM_Total:##,###} MiB".WriteLine(perfMonColor);
+            $"                    : Available : ".Write(Color.Gray); $"{ PhysicalRAM_Available:##,###} MiB".WriteLine(perfMonColor);
+            $"                    : Free      : ".Write(Color.Gray); $"{ PhysicalRAM_FreePerc:##0.#}% ".WriteLine(perfMonColor);
+
+            $"\nCommitted RAM       : Total     : ".Write(Color.Gray); $"{ CommittedRAM_Total:##,###} MiB".WriteLine(perfMonColor);
+            $"                    : Peak      : ".Write(Color.Gray); $"{ CommittedRAM_Peak:##,###} MiB ".WriteLine(perfMonColor);
 
             var dbInfoColor = Color.CadetBlue;
             $"\nRavenURL            : ".Write(Color.Gray);this.RavenURL.WriteLine(dbInfoColor);
             $"LastDBRefresh       : ".Write(Color.Gray); $"{this.LastDatabaseRefresh:G}".WriteLine(dbInfoColor);
-            $"Docs in DBCount     : ".Write(Color.Gray); $"{ this.CountOfDocumentsInDB:##,###}".WriteLine(dbInfoColor);
+            $"Docs in DB          : ".Write(Color.Gray); $"{ this.CountOfDocumentsInDB:##,###}".WriteLine(dbInfoColor);
             if (indexes != null)
             {
                 $"Indexes (Count:{this.CountOfIndexes})   :".Write(Color.Gray); " Stale: ".Write(Color.DeepPink); $"{this.staleIndexes?.Count}".WriteLine(Color.DeepPink);
@@ -111,7 +136,7 @@ namespace RavenDBTestApril2019
             var indexRateColor = Color.Aquamarine;
             $"\nIndex Start         : ".Write(Color.Gray); $"{this.IndexesCreationStartDate:G}".WriteLine(indexRateColor);
             $"Index End           : ".Write(Color.Gray); $"{this.IndexesCreationEndDate:G}".WriteLine(indexRateColor);
-            $"Mins To Create Idx  : ".Write(Color.Gray); if (this.IndexCreationMins > 0) $"{this.IndexCreationMins:##,###} Mins".Write(indexRateColor); "".WriteLine();
+            $"Mins To Create Idx  : ".Write(Color.Gray); if (this.IndexCreationMins > 0) $"{this.IndexCreationMins:##,##0} Mins".Write(indexRateColor); "".WriteLine();
 
             var patchColor = Color.Coral;
             $"\nPatching Start      : ".Write(Color.Gray);$"{this.PatchingStartDate:G}".WriteLine(patchColor);
@@ -127,7 +152,7 @@ namespace RavenDBTestApril2019
             Thread.Sleep(50);
         }
 
-        
+
 
         private void CalculateRates()
         {
@@ -160,9 +185,17 @@ namespace RavenDBTestApril2019
                 this.IndexCreationMins = Convert.ToDecimal(mins);
             }
 
+            //Memory
+            PhysicalRAM_Available = PerformanceInfo.GetPhysicalAvailableMemoryInMiB();
+            PhysicalRAM_Total = PerformanceInfo.GetTotalMemoryInMiB();
+            PhysicalRAM_FreePerc = ((decimal)PhysicalRAM_Available / (decimal)PhysicalRAM_Total) * 100;
+            PhysicalRAM_OccupiedPerc = 100 - PhysicalRAM_FreePerc;
+            CommittedRAM_Total = PerformanceInfo.GetCommittedTotalMemoryInMiB();
+            CommittedRAM_Peak = PerformanceInfo.GetCommittedPeakMemoryInMiB();
 
         }
 
+        
 
 
         public void RefreshDatabaseStatus(bool forceUpdate = false)
@@ -226,18 +259,56 @@ namespace RavenDBTestApril2019
             );
         }
 
-        private void InitializeRAMCounter()
-        {
-            //ramCounter = new PerformanceCounter("Memory", "Available MBytes", true);
-            ramCounter = new PerformanceCounter("Memory", "% Committed Bytes In Use");
-
-        }
-
+ 
         public void Dispose()
         {
             cpuCounter?.Dispose();
-            ramCounter?.Dispose();
             Store?.Dispose();
         }
+
+        private void CaptureStats()
+        {
+
+            //Console.WriteLine("Available Physical Memory (MiB) " + RAMPhysicalAvailable.ToString());
+            //Console.WriteLine("Total Memory (MiB) " + RAMPhysicalTotal.ToString());
+            //Console.WriteLine("Free (%) " + RAMPhysicalFreePercentage.ToString());
+            //Console.WriteLine("Occupied (%) " + RAMPhysicalOccupiedPercentage.ToString());
+
+            var s = new Stat
+            {
+                TimeStamp = DateTime.Now,
+                CPUPercentage = CurrentCPUPercentage,
+                DocsInDB = CountOfDocumentsInDB,
+                ImportRatePerMinute = ImportRatePerMinute,
+                PatchingRatePerMinute =  PatchingRatePerMinute,
+                PatchedDocCount = CountOfDocsPatched,
+                PhysicalRAM_Total = PhysicalRAM_Total,
+                PhysicalRAM_Available = PhysicalRAM_Available,
+                PhysicalRAM_FreePerc = PhysicalRAM_FreePerc,
+                PhysicalRAM_OccupiedPerc = PhysicalRAM_OccupiedPerc,
+                CommittedRAM_Total = CommittedRAM_Total,
+                CommittedRAM_Peak = CommittedRAM_Peak
+
+            };
+
+            Stats.Add(s);
+        }
+
+    }
+
+    public class Stat
+    {
+        public DateTime TimeStamp { get; set; }
+        public int CPUPercentage { get; set; }
+        public long CommittedRAM_Total { get; set; }
+        public long DocsInDB { get; set; }
+        public decimal ImportRatePerMinute { get; set; }
+        public decimal PatchingRatePerMinute { get; set; }
+        public long PhysicalRAM_Total { get; set; }
+        public long PhysicalRAM_Available { get; set; }
+        public decimal PhysicalRAM_FreePerc { get; set; }
+        public decimal PhysicalRAM_OccupiedPerc { get; set; }
+        public long PatchedDocCount { get; set; }
+        public long CommittedRAM_Peak { get; set; }
     }
 }
