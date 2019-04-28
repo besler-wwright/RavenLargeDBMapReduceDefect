@@ -55,7 +55,6 @@ namespace RavenDBTestApril2019
                     rs.Store(reporter);
                     rs.SaveChanges();
                 }
-
             }
 
             "Complete".WriteLine(Color.CornflowerBlue, true);
