@@ -178,6 +178,7 @@ namespace RavenDBTestApril2019
                 this.ImportRatePerMinute = 0;
             }
 
+
             //index creation
             if (IndexesCreationEndDate.IsNotNull() && IndexesCreationStartDate.IsNotNull())
             {
