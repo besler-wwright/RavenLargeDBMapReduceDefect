@@ -65,30 +65,38 @@ namespace RavenDBTestApril2019
         {
             //this method creates multiple threads to insert documents faster
 
-            const int Million = 1000000;
-            var importThreads = settings.CountOfInsertThreads;
+            var maxImportThreads = settings.MaxInsertThreads;
 
-            var docsAdded = 0;
             reporter.ImportStartDate = DateTime.Now;
 
-            while (reporter.CountOfDocsImported < (settings.MillionsOfDocsToImport * Million))
+            while (reporter.CurrentCountOfDocumentsInDB < settings.MinimumDocumentCount)
             {
+                reporter.RefreshDatabaseStatus(true);
+                var threadsNeededToGetAllDocs = Convert.ToInt32(settings.MinimumDocumentCount / settings.CountOfDocsToInsertPerThread);
+                var threadsToUse = Math.Min(threadsNeededToGetAllDocs, maxImportThreads);
+                var docsToGo = settings.MinimumDocumentCount - reporter.CurrentCountOfDocumentsInDB;
+                var maxDocsPerThread = Convert.ToInt32(docsToGo / threadsToUse);
+                var docsPerThread = Math.Min(maxDocsPerThread, settings.CountOfDocsToInsertPerThread);
+
+                reporter.ReportStatus($"Importing {docsPerThread} docs/thread with {threadsToUse} threads ...");
+
                 var tasks = new List<Task<int>>();
-                for (int i = 0; i < importThreads; i++)
+                for (int i = 0; i < threadsToUse; i++)
                 {
-                    tasks.Add(InsertRandomDocsAsync(store, reporter.DatabaseId, settings.CountOfDocsToInsertPerThread));
+                    tasks.Add(InsertRandomDocsAsync(store, reporter.DatabaseId, docsPerThread));
                 }
 
-                await Task.WhenAll(tasks);
+                //await Task.WhenAll(tasks);
+                //docsAdded += tasks.Sum(z => z.Result);
+                ////for (int i = 0; i < importThreads; i++)
+                ////{
+                ////    reporter.CountOfDocsImported += tasks[i].Result;
+                ////}
 
-                docsAdded += tasks.Sum(z => z.Result);
-                for (int i = 0; i < importThreads; i++)
-                {
-                    reporter.CountOfDocsImported += tasks[i].Result;
-                }
+                await Task.WhenAny(tasks);
 
-                reporter.ReportStatus($"Imported {docsAdded:##,##0} docs");
-                reporter.ImportEndDate = DateTime.Now;
+                reporter.ImportLastUpdateDate = DateTime.Now;
+                
             }
         }
 
@@ -168,7 +176,11 @@ namespace RavenDBTestApril2019
             {
                 var query = rs.Advanced
                     .DocumentQuery<PaymentDataSearchIndex.Result, PaymentDataSearchIndex>()
-                    .WhereLessThan(z => z.Amount, -5000);
+                    .WhereLessThan(z => z.Amount, -5000)
+                    .AndAlso()
+                    .Not
+                    .ContainsAny(z => z.TagIds, new List<string>{ tag.Id } );
+                    
 
                 var patchByQueryOperation = BuildAddTagPatchByQueryOperation(query, denormalizedTag, user, true);
 
@@ -178,7 +190,7 @@ namespace RavenDBTestApril2019
 
             }
 
-            reporter.PatchingEndDate = DateTime.Now;
+            reporter.PatchingLastUpdateDate = DateTime.Now;
             reporter.ReportStatus("Patching Command(s) sent");
         }
 
@@ -193,7 +205,7 @@ namespace RavenDBTestApril2019
                     DeterminateProgress progress = (DeterminateProgress)x;
                     var perc = (((decimal)progress.Processed / (decimal)progress.Total) * 100);
                     reporter.CountOfDocsPatched = progress.Processed;
-                    reporter.PatchingEndDate = DateTime.Now; //by doing this here,we get to see the rate as we go
+                    reporter.PatchingLastUpdateDate = DateTime.Now; //by doing this here,we get to see the rate as we go
                     reporter.ReportStatus($"Tag Progress: { perc:##,##0.0###}%   [{progress.Processed:##,##0} Tagged of {progress.Total:##,##0}]");
                 };
 
@@ -221,24 +233,23 @@ namespace RavenDBTestApril2019
         {
             var queryParameters = query.GetIndexQuery().QueryParameters;
             var indexQuery = query.GetIndexQuery().Query;
-
             var script =
-                $@"declare function removeDuplicates(myArr, prop) 
-                   {{
-                     return myArr.filter((obj, pos, arr) => 
-                     {{
-                        return arr.map(mapObj => mapObj[prop]).indexOf(obj[prop]) === pos;
-                     }});
-                   }}
+                $@"//declare function removeDuplicates(myArr, prop) 
+                   //{{
+                   //  return myArr.filter((obj, pos, arr) => 
+                   //  {{
+                   //     return arr.map(mapObj => mapObj[prop]).indexOf(obj[prop]) === pos;
+                   //  }});
+                   //}}
                    declare function addTag(currentTags, newTag) {{
                      let newTags = currentTags || [];
                      newTags.push(newTag);
-                     return removeDuplicates(newTags, 'Id');
+                     return newTags; //removeDuplicates(newTags, 'Id');
                    }} 
                    {indexQuery}
                    update 
                    {{ 
-                     this.Tags = addTag(this.Tags, {denormalizedTag.ToJSON()});
+                     this.Tags = addTag(this.Tags, {denormalizedTag.ToJSON()});                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
                      this.UpdatedBy = this.UpdatedBy || {{}};
                      this.UpdatedBy.Id = '{user.Id}';
                      this.UpdatedBy.Name = '{user.Name}';

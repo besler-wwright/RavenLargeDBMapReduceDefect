@@ -49,13 +49,15 @@ namespace RavenDBTestApril2019
         private IEnumerable<IndexInformation> indexes { get; set; }
         private List<IndexInformation> staleIndexes { get; set; }
         private string Status { get; set; }
-        public long CountOfDocumentsInDB { get; set; }
+        public long InitialCountOfDocumentsInDB { get; set; }
+        public long CurrentCountOfDocumentsInDB { get; set; }
         public int CountOfIndexes { get; set; }
         public DateTime LastDatabaseRefresh { get; set; }
 
         public DateTime? ImportStartDate { get; set; }
-        public DateTime? ImportEndDate { get; set; }
-        public long CountOfDocsImported { get; set; }
+        public DateTime? ImportLastUpdateDate { get; set; }
+        public long CountOfDocsImported => CurrentCountOfDocumentsInDB - InitialCountOfDocumentsInDB;
+
         public decimal ImportRatePerMinute { get; set; }
 
         public DateTime? IndexesCreationStartDate { get; set; }
@@ -63,7 +65,7 @@ namespace RavenDBTestApril2019
         public decimal IndexCreationMins { get; set; }
 
         public DateTime? PatchingStartDate { get; set; }
-        public DateTime? PatchingEndDate { get; set; }
+        public DateTime? PatchingLastUpdateDate { get; set; }
         public long CountOfDocsPatched { get; set; }
         public decimal PatchingRatePerMinute { get; set; }
         public string Note { get; set; }
@@ -82,11 +84,12 @@ namespace RavenDBTestApril2019
         public int MaxCPUPercentage => Stats.Max(z => z.CPUPercentage);
         public decimal AvgCPUPercentage => (decimal)Stats.Average(z => z.CPUPercentage);
 
+        private bool HasCompletedInitialDatabaseUpdate { get; set; }
+        public DateTime FirstDatabaseRefreshDate { get; set; }
 
         public List<Stat> Stats { get; set; }
 
         #endregion
-
 
         public void StartTimer()
         {
@@ -116,7 +119,8 @@ namespace RavenDBTestApril2019
             var dbInfoColor = Color.CadetBlue;
             $"\nRavenURL            : ".Write(Color.Gray);this.RavenURL.WriteLine(dbInfoColor);
             $"LastDBRefresh       : ".Write(Color.Gray); $"{this.LastDatabaseRefresh:G}".WriteLine(dbInfoColor);
-            $"Docs in DB          : ".Write(Color.Gray); $"{ this.CountOfDocumentsInDB:##,###}".WriteLine(dbInfoColor);
+            $"Initial Docs in DB  : ".Write(Color.Gray); $"{ this.InitialCountOfDocumentsInDB:##,##0}".WriteLine(dbInfoColor);
+            $"Current Docs in DB  : ".Write(Color.Gray); $"{ this.CurrentCountOfDocumentsInDB:##,##0}".WriteLine(dbInfoColor);
             if (indexes != null)
             {
                 $"Indexes (Count:{this.CountOfIndexes})   :".Write(Color.Gray); " Stale: ".Write(Color.DeepPink); $"{this.staleIndexes?.Count}".WriteLine(Color.DeepPink);
@@ -129,7 +133,7 @@ namespace RavenDBTestApril2019
 
             var importColor = Color.GreenYellow;
             $"\nImport Start        : ".Write(Color.Gray); $"{this.ImportStartDate:G}".WriteLine(importColor);
-            $"Import End          : ".Write(Color.Gray); $"{this.ImportEndDate:G}".WriteLine(importColor);
+            $"Import Last Update  : ".Write(Color.Gray); $"{this.ImportLastUpdateDate:G}".WriteLine(importColor);
             $"Imported Docs       : ".Write(Color.Gray); $"{this.CountOfDocsImported:##,###}".WriteLine(importColor);
             $"Import Rate         : ".Write(Color.Gray); if(this.ImportRatePerMinute > 0) $"{this.ImportRatePerMinute:##,###} Docs/Min".Write(importColor); ; "".WriteLine();
 
@@ -140,7 +144,7 @@ namespace RavenDBTestApril2019
 
             var patchColor = Color.Coral;
             $"\nPatching Start      : ".Write(Color.Gray);$"{this.PatchingStartDate:G}".WriteLine(patchColor);
-            $"Patching End        : ".Write(Color.Gray); $"{this.PatchingEndDate:G}".WriteLine(patchColor);
+            $"Patching Last Update: ".Write(Color.Gray); $"{this.PatchingLastUpdateDate:G}".WriteLine(patchColor);
             $"Patched Docs        : ".Write(Color.Gray); $"{this.CountOfDocsPatched:##,###}".WriteLine(patchColor);
             $"Patch Rate          : ".Write(Color.Gray); if(this.PatchingRatePerMinute > 0)$"{this.PatchingRatePerMinute:##,###} Docs/Min".Write(patchColor); "".WriteLine(); ;
 
@@ -157,9 +161,9 @@ namespace RavenDBTestApril2019
         private void CalculateRates()
         {
             //patching
-            if (PatchingEndDate.IsNotNull() && PatchingStartDate.IsNotNull() && CountOfDocsPatched > 0)
+            if (PatchingLastUpdateDate.IsNotNull() && PatchingStartDate.IsNotNull() && CountOfDocsPatched > 0)
             {
-                var mins = PatchingEndDate.Value.Subtract(PatchingStartDate.Value).TotalMinutes;
+                var mins = PatchingLastUpdateDate.Value.Subtract(PatchingStartDate.Value).TotalMinutes;
                 this.PatchingRatePerMinute = Convert.ToDecimal(this.CountOfDocsPatched / mins);
             }
             else
@@ -168,9 +172,9 @@ namespace RavenDBTestApril2019
             }
 
             //importing
-            if (ImportEndDate.IsNotNull() && ImportStartDate.IsNotNull() && CountOfDocsImported > 0)
+            if (ImportLastUpdateDate.IsNotNull() && ImportStartDate.IsNotNull() && CountOfDocsImported > 0)
             {
-                var mins = ImportEndDate.Value.Subtract(ImportStartDate.Value).TotalMinutes;
+                var mins = ImportLastUpdateDate.Value.Subtract(ImportStartDate.Value).TotalMinutes;
                 this.ImportRatePerMinute = Convert.ToDecimal(this.CountOfDocsImported / mins);
              }
             else
@@ -198,30 +202,33 @@ namespace RavenDBTestApril2019
             CurrentCPUPercentage = Convert.ToInt32(cpuCounter.NextValue());
         }
 
-        
-
 
         public void RefreshDatabaseStatus(bool forceUpdate = false)
         {
             //only update a max of every 5 seconds
             var delta = DateTime.Now.Subtract(LastDatabaseRefresh).TotalSeconds;
-            //$"DELTA: {delta}".WriteLine(Color.PeachPuff);
-            //$"FORCE: {forceUpdate}".WriteLine(Color.PeachPuff);
             if (forceUpdate || delta > 5)
             {
-                //$"REFRESHING DB".WriteLine(Color.PeachPuff);
                 var admin = Store.Maintenance.ForDatabase(this.DatabaseId);
 
                 var databaseStatistics = admin.Send(new GetStatisticsOperation());
                 this.indexes = databaseStatistics.Indexes.Where(x => x.State != IndexState.Disabled);
                 this.staleIndexes = indexes.Where(z => z.IsStale).ToList();
 
-                this.CountOfDocumentsInDB = databaseStatistics.CountOfDocuments;
+                this.CurrentCountOfDocumentsInDB = databaseStatistics.CountOfDocuments;
                 this.CountOfIndexes = databaseStatistics.CountOfIndexes;
 
                 this.LastDatabaseRefresh = DateTime.Now;
-            };
+                if (this.HasCompletedInitialDatabaseUpdate == false)
+                {
+                    this.HasCompletedInitialDatabaseUpdate = true;
+                    this.FirstDatabaseRefreshDate = this.LastDatabaseRefresh;
+                    this.InitialCountOfDocumentsInDB = databaseStatistics.CountOfDocuments;
+                }
+            }
         }
+
+
 
         public void WaitForIndexing()
         {
@@ -239,10 +246,11 @@ namespace RavenDBTestApril2019
                 }
                 else
                 {
-                    ReportStatus($"Waited {stopWatchTotalTime.Elapsed.Subtract(startOfWaitingForIndexing):g} for non-stale indexes.");
+                    var indexElapsed = stopWatchTotalTime.Elapsed.Subtract(startOfWaitingForIndexing);
+                    ReportStatus($"Waited {indexElapsed.Hours:00}:{indexElapsed.Minutes:00}:{indexElapsed.Seconds:00} for non-stale indexes.");
                 }
-                
-                Thread.Sleep(5000);
+
+                Thread.Sleep(1000);
             }
         }
 
@@ -271,17 +279,11 @@ namespace RavenDBTestApril2019
 
         private void CaptureStats()
         {
-
-            //Console.WriteLine("Available Physical Memory (MiB) " + RAMPhysicalAvailable.ToString());
-            //Console.WriteLine("Total Memory (MiB) " + RAMPhysicalTotal.ToString());
-            //Console.WriteLine("Free (%) " + RAMPhysicalFreePercentage.ToString());
-            //Console.WriteLine("Occupied (%) " + RAMPhysicalOccupiedPercentage.ToString());
-
             var s = new Stat
             {
                 TimeStamp = DateTime.Now,
                 CPUPercentage = CurrentCPUPercentage,
-                DocsInDB = CountOfDocumentsInDB,
+                DocsInDB = CurrentCountOfDocumentsInDB,
                 ImportRatePerMinute = ImportRatePerMinute,
                 PatchingRatePerMinute =  PatchingRatePerMinute,
                 PatchedDocCount = CountOfDocsPatched,
