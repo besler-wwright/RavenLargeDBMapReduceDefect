@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Configuration;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -15,9 +16,9 @@ using Raven.Client.Documents.Session;
 
 namespace RavenDBTestApril2019
 {
-    class Program
+    internal class Program
     {
-        static async Task Main(string[] args)
+        private static async Task Main(string[] args)
         {
             Console.SetWindowSize(65, 40);
 
@@ -25,20 +26,37 @@ namespace RavenDBTestApril2019
             var settings = GetSettings();
             settings.ToJSONPretty().WriteLine(Color.Aquamarine);
 
-            IDocumentStore store = new DocumentStore { Database = settings.DatabaseId, Certificate = new X509Certificate2(settings.CertPath), Urls = new[] { settings.RavenURL } };
+            if (settings.Mode == "Raven")
+            {
+                await ExecuteRavenMode(settings);
+            }
+
+            if (settings.Mode == "File")
+            {
+                var sw = new Stopwatch();
+                sw.Start();
+                WriteSmallFiles(settings, sw);
+                WriteBigFile(settings, sw);
+            }
+
+
+            "Complete".WriteLine(Color.CornflowerBlue, true);
+
+        }
+
+        private static async Task ExecuteRavenMode(MySettings settings)
+        {
+            IDocumentStore store = new DocumentStore {Database = settings.DatabaseId, Certificate = new X509Certificate2(settings.CertPath), Urls = new[] {settings.RavenURL}};
             store.Initialize();
 
-            var reporter = new Reporter(store) { Note = settings.Note };
-
+            var reporter = new Reporter(store) {Note = settings.Note};
             try
             {
-                reporter.ReportStatus("Starting...");
-
+                reporter.ReportStatus($"Starting {settings.Mode} Mode");
                 if (settings.ImportDocs) await InsertDocuments(settings, reporter, store);
                 if (settings.CreateIndexes) CreateIndexesWaitForNonStale(store, reporter, settings);
                 if (settings.PatchDocs) PatchSomeRecords(store, reporter);
                 if (settings.WaitForIndexesToNotBeStale) reporter.WaitForIndexing();
-
             }
             catch (Exception e)
             {
@@ -56,14 +74,51 @@ namespace RavenDBTestApril2019
                     rs.SaveChanges();
                 }
             }
+        }
 
-            "Complete".WriteLine(Color.CornflowerBlue, true);
+        private static void WriteBigFile(MySettings settings, Stopwatch sw)
+        {
+            var BigFileStart = sw.Elapsed;
+            var file = Path.Join(settings.TempDir, $"big-file.txt");
+            decimal gbToWrite = settings.LargeFileSizeInGB; //0.000001 = KB, 0.001 = MB, 1.0 = GB
+            WriteDummyFile(gbToWrite, file);
+            Console.WriteLine($"Time to write big file: {sw.Elapsed.Subtract(BigFileStart):g} [{Convert.ToInt64(gbToWrite * 1024 * 1024 * 1024):##,##0} bytes]");
+        }
 
+
+
+        private static void WriteSmallFiles(MySettings settings, Stopwatch sw)
+        {
+            var fileWriteStart = sw.Elapsed;
+            int CountOfSmallFiles = settings.CountOfSmallFilesToWrite;
+            decimal gbToWrite = settings.SmallFileSizeInGB; //0.000001 = KB, 0.001 = MB, 1.0 = GB
+            for (var i = 0; i < CountOfSmallFiles; i++)
+            {
+                var file = Path.Join(settings.TempDir, $"small-file-{i:000}.txt");
+                WriteDummyFile(gbToWrite, file);
+            }
+
+            Console.WriteLine($"Time to write {CountOfSmallFiles} files: {sw.Elapsed.Subtract(fileWriteStart):g} [{Convert.ToInt64(gbToWrite * 1024 * 1024 * 1024 * CountOfSmallFiles):##,##0} bytes]");
+        }
+
+        private static void WriteDummyFile(decimal sizeInGB, string file)
+        {
+            const char text = '0';
+            var totalSize = Convert.ToInt64(sizeInGB * 1024 * 1024 * 1024);
+
+            using (StreamWriter outfile = new StreamWriter(file))
+            {
+                for (long i = 0; i < totalSize; i++)
+                {
+                    outfile.Write(text);
+                }
+
+            }
         }
 
         private static async Task InsertDocuments(MySettings settings, Reporter reporter, IDocumentStore store)
         {
-            //this method creates multiple threads to insert documents faster
+            //this method optionally creates multiple threads 
 
             var maxImportThreads = settings.MaxInsertThreads;
 
@@ -85,13 +140,6 @@ namespace RavenDBTestApril2019
                 {
                     tasks.Add(InsertRandomDocsAsync(store, reporter.DatabaseId, docsPerThread));
                 }
-
-                //await Task.WhenAll(tasks);
-                //docsAdded += tasks.Sum(z => z.Result);
-                ////for (int i = 0; i < importThreads; i++)
-                ////{
-                ////    reporter.CountOfDocsImported += tasks[i].Result;
-                ////}
 
                 await Task.WhenAny(tasks);
 

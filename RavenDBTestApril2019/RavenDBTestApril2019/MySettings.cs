@@ -2,6 +2,11 @@
 {
     public class MySettings
     {
+        public string Mode { get; set; }
+        public string TempDir { get; set; }
+        public decimal LargeFileSizeInGB { get; set; }
+        public decimal SmallFileSizeInGB { get; set; }
+        public int CountOfSmallFilesToWrite { get; set; }
         public string Note { get; set; }
         public string DatabaseId { get; set; }
         public string CertPath { get; set; }
