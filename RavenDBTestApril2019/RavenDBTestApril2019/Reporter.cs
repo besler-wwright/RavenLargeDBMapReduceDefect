@@ -25,6 +25,7 @@ namespace RavenDBTestApril2019
             this.RavenURL = store.Urls.First();
 
             Stats = new List<Stat>();
+            ExceptionInfos = new List<ExceptionInfo>();
 
             InitialiseCPUCounter();
 
@@ -38,8 +39,8 @@ namespace RavenDBTestApril2019
         public Stopwatch stopWatchTotalTime = new Stopwatch();
 
         public string Id { get; set; }
-        public string ExceptionMessage { get; set; }
-        public string StackTrace { get; set; }
+        public string LastExceptionMessage => ExceptionInfos.LastOrDefault()?.Message;
+        public string LastExceptionStackTrace => ExceptionInfos.LastOrDefault()?.StackTrace;
         public DateTime LastUpdated { get; set; }
         public bool IsWaitingForIndexingToComplete { get; set; }
 
@@ -91,6 +92,8 @@ namespace RavenDBTestApril2019
         public List<Stat> Stats { get; set; }
         public string PatchSendAsync { get; set; }
 
+
+        public List<ExceptionInfo> ExceptionInfos { get; set; }
         #endregion
 
         public void StartTimer()
@@ -155,6 +158,12 @@ namespace RavenDBTestApril2019
             $"\nStatus              : ".Write(Color.Gray); this.Status.WriteLine(Color.Yellow);
             this.Status = "";
             $"Elapsed Time        : ".Write(Color.Gray); $"{stopWatchTotalTime.Elapsed.Hours:00}:{stopWatchTotalTime.Elapsed.Minutes:00}:{stopWatchTotalTime.Elapsed.Seconds:00}".WriteLine(Color.LawnGreen);
+
+            if (this.LastExceptionMessage.HasValue())
+            {
+                $"\nLatest Exception  : ".Write(Color.Gray); this.LastExceptionMessage.WriteLine(Color.Red);
+                $"Stack Trace         : \n".Write(Color.Gray); this.LastExceptionStackTrace.WriteLine(Color.Red);
+            }
             "*************************************************************************".WriteLine(Color.CornflowerBlue);
 
             Thread.Sleep(50);
@@ -306,22 +315,16 @@ namespace RavenDBTestApril2019
             Stats.Add(s);
         }
 
-    }
-
-    public class Stat
-    {
-        public DateTime TimeStamp { get; set; }
-        public int CPUPercentage { get; set; }
-        public long CommittedRAM_Total { get; set; }
-        public long DocsInDB { get; set; }
-        public decimal ImportRatePerMinute { get; set; }
-        public decimal PatchingRatePerMinute { get; set; }
-        public long PhysicalRAM_Total { get; set; }
-        public long PhysicalRAM_Available { get; set; }
-        public decimal PhysicalRAM_FreePerc { get; set; }
-        public decimal PhysicalRAM_OccupiedPerc { get; set; }
-        public long PatchedDocCount { get; set; }
-        public long CommittedRAM_Peak { get; set; }
-        public string Status { get; set; }
+        public void AddExceptionInfo(Exception exception)
+        {
+            var ei = new ExceptionInfo
+            {
+                Id = $"ExceptionInfo-{Guid.NewGuid():N}",
+                StackTrace = exception.StackTrace,
+                Message = exception.Message,
+                CreatedDate = DateTime.Now
+            };
+            this.ExceptionInfos.Add(ei);
+        }
     }
 }

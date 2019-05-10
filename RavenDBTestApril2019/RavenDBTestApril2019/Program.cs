@@ -75,8 +75,7 @@ namespace RavenDBTestApril2019
                 e.Message.WriteLine(Color.Red);
                 e.StackTrace.WriteLine(Color.Red);
                 Thread.Sleep(10000);
-                reporter.ExceptionMessage = e.Message;
-                reporter.StackTrace = e.StackTrace;
+                reporter.AddExceptionInfo(e);
 
                 //throw;
             }
@@ -300,73 +299,26 @@ namespace RavenDBTestApril2019
 
             try
             {
-                //$"************************************ Before sending patch operation **************************************".WriteLine(Color.Pink, showTimeStamp:true);
-                //Thread.Sleep(5000);
-                //var tokenSource = new CancellationTokenSource();
-                //tokenSource.CancelAfter(TimeSpan.FromMinutes(6));
-                //var cToken = tokenSource.Token;
-                
-                
+                var operationStart = reporter.stopWatchTotalTime.Elapsed;
 
-
-                var operationStart = reporter.stopWatchTotalTime.Elapsed;                
+                //send the patch operation
                 var operation = await store.Operations.ForDatabase(reporter.DatabaseId).SendAsync(patchOperation);
-                //var operation = await store.Operations.ForDatabase(reporter.DatabaseId).SendAsync(patchOperation, token: cToken);
                 var operationEnd = reporter.stopWatchTotalTime.Elapsed;
                 var operationLength = operationEnd - operationStart;
                 reporter.PatchSendAsync = $"{operationLength:g}";
                 reporter.ReportStatus($"Patch Operation SendAsync took {operationLength:g}");
-                //"************************************ After sending patch operation **************************************".WriteLine(Color.Pink, showTimeStamp:true);
-                //Thread.Sleep(5000);
 
-
-                //var loopStart = reporter.stopWatchTotalTime.Elapsed;
-                //"************************************ prior waiting in loop **************************************".WriteLine(Color.Pink);
-                //Thread.Sleep(5000);
-                //do
-                //{
-                //    var x = new
-                //    {
-                //        operation.IsCompleted,
-                //        operation.IsCompletedSuccessfully,
-                //        operation.IsFaulted,
-                //        Elapsed = $"{reporter.stopWatchTotalTime.Elapsed.Subtract(loopStart):g}"
-                //    };
-                //    x.ToJSONPretty().WriteLine(Color.Pink, showTimeStamp:true);
-                //    Thread.Sleep(1000);
-                //} while (operation.IsCompleted == false);
-                //$"************************************ after waiting in loop for {reporter.stopWatchTotalTime.Elapsed.Subtract(loopStart):g} **************************************".WriteLine(Color.Yellow);
-                //Thread.Sleep(10000);
-
-
-
-                //"************************************ before WaitForCompletionAsync **************************************".WriteLine(Color.Pink);
-                //Thread.Sleep(5000);
-                //var result = await operation.WaitForCompletionAsync();
-                //operationEnd = reporter.stopWatchTotalTime.Elapsed;
-                //reporter.ReportStatus($"{result.Message} took {operationEnd - operationStart:g}");
-                //$"************************************ after WaitForCompletionAsync {result.Message} **************************************".WriteLine(Color.Aqua);
-                //Thread.Sleep(5000);
-
-                
-
-
-                //"************************************ before reporter report status **************************************".WriteLine(Color.Pink);
-                //Thread.Sleep(5000);
-                //reporter.ReportStatus($"Async Result Message [{result.Message}]");
-                //"************************************ after reporter report status **************************************".WriteLine(Color.Pink);
-                //Thread.Sleep(5000);
-
+                //wait for the patching to complete
                 var result = await operation.WaitForCompletionAsync<BulkOperationResult>();
                 operationEnd = reporter.stopWatchTotalTime.Elapsed;
                 reporter.PatchingLastUpdateDate = DateTime.Now;
 
-                var mins = (operationEnd - operationStart).TotalMinutes;
+                //get results patched
                 string[] msgArray = result.Message.Split(" ");
                 var count = int.Parse(msgArray[1].Replace(",", ""));
                 reporter.CountOfDocsPatched = count;
-                //reporter.PatchingRatePerMinute = Convert.ToDecimal(count / mins);
-
+                
+                //report update
                 var formattedResults =
                     result.Details
                         .Select(x => (BulkOperationResult.PatchDetails)x)
@@ -381,14 +333,11 @@ namespace RavenDBTestApril2019
             {
                 ex.Message.WriteLine(Color.Red);
                 Thread.Sleep(5000);
-                reporter.ExceptionMessage = ex.Message;
-                reporter.StackTrace = ex.StackTrace;
+                reporter.AddExceptionInfo(ex);
                 return false;
             }
             finally
             {
-                //"************************************ FINALLLLLLLLY!!!!! **************************************".WriteLine(Color.Pink);
-                //Thread.Sleep(5000);
                 reporter.ReportStatus("Successfully executed async patch");
             }
 
