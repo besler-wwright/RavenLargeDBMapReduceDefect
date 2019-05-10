@@ -4,8 +4,9 @@
     {
         public string Mode { get; set; }
         public string TempDir { get; set; }
-        public decimal LargeFileSizeInGB { get; set; }
-        public decimal SmallFileSizeInGB { get; set; }
+        public bool UseUnbufferedFileIO { get; set; }
+        public int LargeFileSizeInMB { get; set; }
+        public int SmallFileSizeInMB { get; set; }
         public int CountOfSmallFilesToWrite { get; set; }
         public string Note { get; set; }
         public string DatabaseId { get; set; }

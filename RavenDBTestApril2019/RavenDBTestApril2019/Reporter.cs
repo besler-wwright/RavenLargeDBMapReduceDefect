@@ -35,7 +35,7 @@ namespace RavenDBTestApril2019
         #region Fields and Properties
         [JsonIgnore]
         public IDocumentStore Store { get; set; }
-        private readonly Stopwatch stopWatchTotalTime = new Stopwatch();
+        public Stopwatch stopWatchTotalTime = new Stopwatch();
 
         public string Id { get; set; }
         public string ExceptionMessage { get; set; }
@@ -66,6 +66,7 @@ namespace RavenDBTestApril2019
 
         public DateTime? PatchingStartDate { get; set; }
         public DateTime? PatchingLastUpdateDate { get; set; }
+        public string PatchingElapsed { get; set; }
         public long CountOfDocsPatched { get; set; }
         public decimal PatchingRatePerMinute { get; set; }
         public string Note { get; set; }
@@ -88,6 +89,7 @@ namespace RavenDBTestApril2019
         public DateTime FirstDatabaseRefreshDate { get; set; }
 
         public List<Stat> Stats { get; set; }
+        public string PatchSendAsync { get; set; }
 
         #endregion
 
@@ -95,7 +97,7 @@ namespace RavenDBTestApril2019
         {
             stopWatchTotalTime.Start();
         }
-        
+
 
         public void Report()
         {
@@ -131,6 +133,7 @@ namespace RavenDBTestApril2019
                 }
             }
 
+
             var importColor = Color.GreenYellow;
             $"\nImport Start        : ".Write(Color.Gray); $"{this.ImportStartDate:G}".WriteLine(importColor);
             $"Import Last Update  : ".Write(Color.Gray); $"{this.ImportLastUpdateDate:G}".WriteLine(importColor);
@@ -143,8 +146,9 @@ namespace RavenDBTestApril2019
             $"Mins To Create Idx  : ".Write(Color.Gray); if (this.IndexCreationMins > 0) $"{this.IndexCreationMins:##,##0} Mins".Write(indexRateColor); "".WriteLine();
 
             var patchColor = Color.Coral;
-            $"\nPatching Start      : ".Write(Color.Gray);$"{this.PatchingStartDate:G}".WriteLine(patchColor);
-            $"Patching Last Update: ".Write(Color.Gray); $"{this.PatchingLastUpdateDate:G}".WriteLine(patchColor);
+            $"\nPatchSendAsync      : ".Write(Color.Gray); $"{this.PatchSendAsync}".WriteLine(patchColor);
+            $"Patching Start      : ".Write(Color.Gray);$"{this.PatchingStartDate:G}".WriteLine(patchColor);
+            $"Patching Last Update: ".Write(Color.Gray); $"{this.PatchingLastUpdateDate:G}".Write(patchColor); if(this.PatchingElapsed.HasValue()) " Elapsed: ".Write(Color.Gray); $"{this.PatchingElapsed}".WriteLine(patchColor);
             $"Patched Docs        : ".Write(Color.Gray); $"{this.CountOfDocsPatched:##,###}".WriteLine(patchColor);
             $"Patch Rate          : ".Write(Color.Gray); if(this.PatchingRatePerMinute > 0)$"{this.PatchingRatePerMinute:##,###} Docs/Min".Write(patchColor); "".WriteLine(); ;
 
@@ -155,16 +159,15 @@ namespace RavenDBTestApril2019
 
             Thread.Sleep(50);
         }
-
-
-
         private void CalculateRates()
         {
             //patching
             if (PatchingLastUpdateDate.IsNotNull() && PatchingStartDate.IsNotNull() && CountOfDocsPatched > 0)
             {
-                var mins = PatchingLastUpdateDate.Value.Subtract(PatchingStartDate.Value).TotalMinutes;
+                var elapsed = PatchingLastUpdateDate.Value.Subtract(PatchingStartDate.Value);
+                var mins = elapsed.TotalMinutes;
                 this.PatchingRatePerMinute = Convert.ToDecimal(this.CountOfDocsPatched / mins);
+                this.PatchingElapsed = $"{elapsed:g}";
             }
             else
             {
@@ -202,6 +205,8 @@ namespace RavenDBTestApril2019
             CurrentCPUPercentage = Convert.ToInt32(cpuCounter.NextValue());
         }
 
+        
+
 
         public void RefreshDatabaseStatus(bool forceUpdate = false)
         {
@@ -227,8 +232,7 @@ namespace RavenDBTestApril2019
                 }
             }
         }
-
-
+        
 
         public void WaitForIndexing()
         {
@@ -252,6 +256,9 @@ namespace RavenDBTestApril2019
 
                 Thread.Sleep(1000);
             }
+
+            var elapsed = stopWatchTotalTime.Elapsed.Subtract(startOfWaitingForIndexing);
+            ReportStatus($"Waited {elapsed.Hours:00}:{elapsed.Minutes:00}:{elapsed.Seconds:00} for non-stale indexes.");
         }
 
         public void ReportStatus(string status)
@@ -292,8 +299,8 @@ namespace RavenDBTestApril2019
                 PhysicalRAM_FreePerc = PhysicalRAM_FreePerc,
                 PhysicalRAM_OccupiedPerc = PhysicalRAM_OccupiedPerc,
                 CommittedRAM_Total = CommittedRAM_Total,
-                CommittedRAM_Peak = CommittedRAM_Peak
-
+                CommittedRAM_Peak = CommittedRAM_Peak,
+                Status = this.Status
             };
 
             Stats.Add(s);
@@ -315,5 +322,6 @@ namespace RavenDBTestApril2019
         public decimal PhysicalRAM_OccupiedPerc { get; set; }
         public long PatchedDocCount { get; set; }
         public long CommittedRAM_Peak { get; set; }
+        public string Status { get; set; }
     }
 }
